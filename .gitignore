@@ -221,3 +221,12 @@ __marimo__/
 
 # Data
 data/
+
+# Exports derived from the match data (e.g. Scripts/01_DataExploration.py writes
+# filtered_frames.csv). Frame-level exports must never be published.
+filtered_frames.csv
+*.mp4
+*_atd.txt
+*_atd.xml
+*_homography.csv
+*_smart_tagging.xml

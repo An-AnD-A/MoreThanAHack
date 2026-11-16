@@ -11,6 +11,10 @@ from morethanahack.helpers.config import DATA_ROOT, DEFAULT_SOURCE, SOURCES, SUF
 # Raw ATD line: "<frame_id>:<players>:<ball>" -- the frame id is everything before the first ":".
 FIELD_SEP = ":"
 
+# Video / ATD frame rate (FrameRate in the ATD meta xml). Smart Tagging times are in
+# seconds, so this converts them to video frames.
+VIDEO_FPS = 25.0
+
 
 # ---------------------------------------------------------------- paths
 
@@ -35,6 +39,19 @@ def expected_frames(source=DEFAULT_SOURCE):
     return SOURCES[source]["n_video_frames"]
 
 
+def smart_tagging_path(source=DEFAULT_SOURCE, data_root=DATA_ROOT):
+    """Smart Tagging xml for a source. Only sources that list "smart_tagging" in assets have one."""
+    if source not in SOURCES:
+        raise KeyError(f"no such source {source!r}; have {sorted(SOURCES)}")
+    if "smart_tagging" not in SOURCES[source]["assets"]:
+        raise ValueError(f"source {source!r} has no Smart Tagging data")
+
+    path = Path(data_root) / source / (SOURCES[source]["stem"] + SUFFIXES["smart_tagging"])
+    if not path.is_file():
+        raise FileNotFoundError(f"Smart Tagging file not found:\n  {path}")
+    return path
+
+
 # ---------------------------------------------------------------- loading
 
 def load(source=DEFAULT_SOURCE, data_root=DATA_ROOT):
@@ -43,6 +60,37 @@ def load(source=DEFAULT_SOURCE, data_root=DATA_ROOT):
 
     meta, raw = atd_paths(source, data_root)
     return metrica.load_tracking_epts(meta_data=str(meta), raw_data=str(raw))
+
+
+def load_smart_tagging(source=DEFAULT_SOURCE, data_root=DATA_ROOT, fps=VIDEO_FPS):
+    """Smart Tagging events as a DataFrame, one row per <instance>, sorted by start time.
+
+    Columns: id, code, start, end (seconds into the video), start_frame, end_frame
+    (video frames, counting from 0 like the submission rows), then one column per label
+    group ("Team", "Half", "Type", ...). Labels an instance doesn't have are NaN.
+
+    kloppy puts every instance in a single period starting at 0, so its timestamps are
+    plain seconds from the start of the video -- the same numbers as in the xml.
+    """
+    import pandas as pd
+    from kloppy import sportscode
+
+    dataset = sportscode.load(str(smart_tagging_path(source, data_root)))
+    rows = [
+        {
+            "id": int(code.code_id),
+            "code": code.code,
+            "start": code.timestamp.total_seconds(),
+            "end": code.end_timestamp.total_seconds(),
+            **code.labels,
+        }
+        for code in dataset.records
+    ]
+
+    df = pd.DataFrame(rows)
+    df.insert(4, "start_frame", (df["start"] * fps).round().astype(int))
+    df.insert(5, "end_frame", (df["end"] * fps).round().astype(int))
+    return df.sort_values(["start", "id"], ignore_index=True)
 
 
 # ---------------------------------------------------------------- frame mapping
