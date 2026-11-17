@@ -35,7 +35,7 @@ EVAL_DIR = PROJECT_ROOT / "archive" / "REPO" / "evaluation"
 SCORER = EVAL_DIR / "run_evaluation.py"
 VALIDATOR = EVAL_DIR / "validate_submission.py"
 HOST_BASELINES = EVAL_DIR / "results"
-DEFAULT_SUBMISSION = DATA_ROOT / "derived" / "possession" / "submission" / "possession.csv"
+DEFAULT_SUBMISSION = DATA_ROOT / "derived" / "possession" / "submission" / "NOV4.csv"
 OUT_DIR = DATA_ROOT / "derived" / "evaluation"
 
 

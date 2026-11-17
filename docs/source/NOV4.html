@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NOV4 Technical Document</title>
+<style>
+  @page { size: A4; margin: 16mm 17mm 16mm 17mm; }
+  :root {
+    --ink: #1f2933; --muted: #5f6b7a; --accent: #1f5fa8; --rule: #d5dbe3;
+    --panel: #eef3f9; --zebra: #f6f8fb; --code: #f3f4f6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink);
+         font: 10pt/1.45 "Segoe UI", "DejaVu Sans", Arial, sans-serif; }
+  h1 { font-size: 22pt; margin: 0 0 2pt; line-height: 1.15; }
+  .sub { color: var(--muted); font-size: 11.5pt; margin: 0 0 8pt; }
+  .meta { color: var(--muted); font-size: 8.8pt; margin: 0 0 10pt; }
+  .meta b { color: var(--ink); }
+  h2 { color: var(--accent); font-size: 14pt; margin: 16pt 0 5pt; break-after: avoid; }
+  h3 { font-size: 10.8pt; margin: 10pt 0 3pt; break-after: avoid; }
+  p { margin: 0 0 6pt; }
+  ul, ol { margin: 0 0 6pt; padding-left: 16pt; }
+  li { margin-bottom: 2.5pt; }
+  a { color: var(--accent); text-decoration: none; }
+  code, pre { font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 8.6pt; }
+  code { background: var(--code); padding: 0 2pt; border-radius: 2pt; }
+  pre { background: var(--code); padding: 6pt 8pt; border-radius: 3pt; margin: 0 0 7pt;
+        white-space: pre-wrap; break-inside: avoid; line-height: 1.4; }
+  pre code { background: none; padding: 0; }
+  .panel { background: var(--panel); border-left: 4pt solid var(--accent); padding: 7pt 10pt;
+           margin: 0 0 8pt; break-inside: avoid; }
+  .panel p:last-child { margin-bottom: 0; }
+  .note { border-left: 3pt solid #c58b1b; background: #fbf6ec; padding: 6pt 9pt; margin: 0 0 8pt;
+          break-inside: avoid; }
+  table { border-collapse: collapse; width: 100%; margin: 3pt 0 8pt; font-size: 8.8pt; }
+  th { text-align: left; border-bottom: 1.2pt solid var(--ink); padding: 3pt 5pt; }
+  td { padding: 3pt 5pt; vertical-align: top; border-bottom: 0.5pt solid var(--rule); }
+  tr { break-inside: avoid; }
+  tbody tr:nth-child(even) td { background: var(--zebra); }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .pipe { display: flex; align-items: stretch; gap: 0; margin: 6pt 0 3pt; break-inside: avoid; }
+  .box { flex: 1; border: 1pt solid var(--accent); border-radius: 4pt; padding: 5pt 4pt;
+         text-align: center; font-size: 7.8pt; background: var(--panel); }
+  .box b { display: block; font-size: 8.2pt; margin-bottom: 1pt; }
+  .box.end { background: var(--accent); color: #fff; flex: 0.7; }
+  .arrow { width: 14pt; display: flex; align-items: center; justify-content: center;
+           color: var(--accent); font-size: 11pt; }
+  .cap { color: var(--muted); font-size: 8.3pt; margin: 2pt 0 8pt; }
+  figure { margin: 4pt 0 0; break-inside: avoid; }
+  figure img { width: 100%; }
+  .two { columns: 2; column-gap: 14pt; }
+  .tag { display: inline-block; font-size: 7.5pt; padding: 0 4pt; border-radius: 3pt;
+         background: var(--accent); color: #fff; vertical-align: 1pt; }
+  .page-break { break-before: page; }
+</style>
+</head>
+<body>
+
+<h1>Ball possession from tracking alone</h1>
+<p class="sub">A rule-based, label-free possession model: dead-ball detection, a nearest-player
+control signal and a flicker-resistant decoder</p>
+<p class="meta"><b>Team NOV4</b> &middot; Anand Anilkumar, Anoop Venugopal, Shubham Kumar<br>
+More than a Hack 2027 &middot; Phase 1: Ball Possession &middot; FC Barcelona vs Athletic Club &middot;
+Repository: <a href="https://github.com/An-AnD-A/MoreThanAHack">github.com/An-AnD-A/MoreThanAHack</a>
+&middot; 17 November 2026 &middot; Submission file: <code>NOV4.csv</code></p>
+
+<div class="panel">
+<p><b>In one paragraph.</b> We label all 199,319 frames of the tactical video H / A / D using only
+the provided automatic tracking (ATD). Smart Tagging plays a very small part, and the half
+boundaries published in <code>DATA.md</code> set the match scope. No model is trained and no
+labelled data of any kind is used. Stage&nbsp;1 finds dead-ball spans from drops in player speed
+and from the ball leaving the pitch. Stage&nbsp;2 turns the distance from the ball to the nearest
+player of each team into a per-frame control signal. A two-state Viterbi decoder, with a cost for
+every switch and a 2-second minimum spell, turns that signal into possessions that do not flicker.
+That is what the ranking metric, spellF1, rewards.</p>
+<p><b>Result on the public 5-minute window</b> (see section 8 for why this is a check, not a
+benchmark): spellF1 <b>0.625</b>, macroF1 <b>0.904</b>, dead-ball recall 0.89. The best published
+baseline, <i>smooth125</i>, scores 0.424 / 0.581. <b>Reproduction is verified:</b> a clean
+rebuild from the raw data gives a byte-identical file (SHA-256 <code>6bbbefa3…8c954ee7f1930</code>).</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>1. How to produce the submission file</h2>
+
+<p>Requirements: <a href="https://docs.astral.sh/uv/">uv</a> and Python 3.12 (pinned in
+<code>.python-version</code>). All dependencies are pinned exactly in <code>uv.lock</code>
+(kloppy 3.19.1, numpy 2.5.4, pandas 3.1.0, matplotlib 3.11.2). The organisers' repository is a
+git submodule and is needed for the official validator. The run needs about 4 GB of RAM and takes
+about one minute end to end.</p>
+
+<ol>
+<li><b>Get the code and the environment.</b>
+<pre><code>git clone --recurse-submodules https://github.com/An-AnD-A/MoreThanAHack.git
+cd MoreThanAHack
+uv sync --frozen</code></pre></li>
+<li><b>Place the data bundle.</b> The data is not in the repository (it may not be
+redistributed). Copy the tactical files to:
+<pre><code>data/tactical/BAR-ATH_tactical_atd.xml
+data/tactical/BAR-ATH_tactical_atd.txt
+data/tactical/BAR-ATH_tactical_smart_tagging.xml</code></pre></li>
+<li><b>Generate the submission.</b> One command runs the whole model. It writes the file, runs the
+organisers' <code>validate_submission.py</code> on it, and stops with an error if validation
+fails.
+<pre><code>uv run python Scripts/05_PossessionAssignment.py --refresh</code></pre>
+The output is <b><code>data/derived/possession/submission/NOV4.csv</code></b>: the file to upload.
+<code>--refresh</code> rebuilds the tracking cache from the raw ATD (about 50 s). Leave the flag
+out on later runs to reuse the cache; the output is identical either way.</li>
+<li><b>Check it (optional).</b> This runs the official scorer, unchanged, on the public 5 minutes,
+alongside the four host baselines and with bootstrap intervals:
+<pre><code>uv run python Scripts/06_ScoreSubmission.py --with-baselines --bootstrap 1000</code></pre></li>
+<li><b>Confirm it is the same file.</b> Expected SHA-256 of <code>NOV4.csv</code>:<br>
+<code>6bbbefa3813265e853adc5a77411886a4eae140289bf872113d8c954ee7f1930</code><br>
+(<code>sha256sum</code> on Linux / macOS, <code>Get-FileHash</code> in PowerShell).</li>
+</ol>
+<p>The file is written with <code>\n</code> line endings, so it is byte-identical on every OS. The
+labelling path is deterministic and uses no random numbers. Other outputs from step 3, all in
+<code>data/derived/possession/</code>: <code>dead_spans.csv</code> (one row per dead span and the
+reason it is dead), <code>possessions.csv</code> (one row per decoded spell) and
+<code>timeline.png</code> (control evidence and labels over each half).</p>
+
+<!-- ============================================================ -->
+<h2>2. Data exploration that shaped the method</h2>
+<p>Before building the model we explored the data with scripts 01–04, and later with a dead-ball
+sweep (script 07). Each finding below led directly to a design decision.</p>
+
+<table>
+<thead><tr><th style="width:25%">Exploration</th><th style="width:43%">What we found</th><th>What it decided</th></tr></thead>
+<tbody>
+<tr><td><b>Frame alignment</b><br><code>helpers/loader.py</code>, <code>01_DataExploration.py</code></td>
+<td>199,319 ATD records for 199,319 video frames: contiguous, no duplicates,
+<code>video_frame = frame_id − 1</code>.</td>
+<td>Every signal can be indexed directly by submission row. The pipeline checks this before
+anything else.</td></tr>
+<tr><td><b>Ball visibility</b><br><code>01_DataExploration.py</code></td>
+<td>The ball is tracked on only <b>56.9%</b> of all frames (59.3% of graded frames, 72% of
+frames we later call alive). When it is lost, it is usually out of play, in a player's hands or
+hidden in a crowd.</td>
+<td>(a) Long gaps in ball tracking are evidence of a dead ball. (b) The decoder must carry
+possession through blind stretches instead of guessing frame by frame.</td></tr>
+<tr><td><b>Units and speed</b><br><code>03_SetPieceIntensity.py</code></td>
+<td>The player-speed channel is labelled “kph” but is m/s: differentiating the positions
+reproduces it with a median ratio of 1.01, and its 99.99th percentile is 8.9. The raw ball-speed
+channel is present on only ~10% of frames.</td>
+<td>Use the provider's player speed as-is. Compute ball speed from position over ±3 frames and
+discard jumps above 40 m/s as glitches.</td></tr>
+<tr><td><b>Smart Tagging timeline</b><br><code>02_TaggingDataInsights.py</code></td>
+<td>Tags are algorithmic and their intervals are templated: a set piece is a fixed 35 s window
+(5 s for kick-offs). Each <code>DEFENDING …</code> code mirrors an attacking code for the other
+team.</td>
+<td>Tags must never set a possession boundary. They are used only as a very weak prior on frames
+with no ball, plus label-free validation. Defending codes are skipped as duplicates.</td></tr>
+<tr><td><b>Set pieces vs intensity</b><br><code>03_SetPieceIntensity.py</code></td>
+<td>Open play runs at about 1.8 m/s per player. Around a set-piece tag, speed falls from about
+−15 s to about 1.0 m/s, then overshoots to 2.4 m/s after the restart. The stoppage dip is −36%
+(2.00 → 1.28 m/s; 82% of events dip; Cohen's d<sub>z</sub> −0.95), against
+−0.09 ± 0.13 m/s at random open-play moments (z = −5.0). The tag's start marks the stoppage, and
+most of the tag window is the play after the restart.</td>
+<td>A drop in collective player speed is a real, detectable signature of a stoppage. This is
+the basis of Stage 1.</td></tr>
+<tr><td><b>Blind velocity-drop detection</b><br><code>04_VelocityDropDetection.py</code></td>
+<td>We found drops from the ATD alone, without the tags, then compared them with the tags. The
+drops catch 75% of the 59 tagged set pieces (chance 27%, p = 0.0005 over 2,000 random rotations
+of the tag times). 51% of drops contain a tag (chance 18%; a lower bound, because fouls are rarely
+tagged). By type: corners 12/12, free kicks 5/5, throw-ins 19/26, goal kicks 5/10. A
+threshold sweep showed the result is not an artefact of one cut-off.</td>
+<td>Adopted as the dead-ball backbone, with a speed <i>ratio</i> to the local tempo instead of a
+fixed m/s cut. Quick throw-ins and goal kicks are missed, which motivated the separate
+ball-out-of-play rule (1b).</td></tr>
+<tr><td><b>Dead-ball threshold sweep</b><br><code>07_DeadBallExperiments.py</code></td>
+<td>Seven variants: looser or stricter hysteresis, shorter stoppages, relaxed dead tests, more
+sensitive out-of-play detection, wider edges, and a combination. The looser variants raise
+set-piece agreement (up to 91%), but public-window dead-ball recall stays at 0.48 for all of
+them. The stricter one collapses it to 0.14.</td>
+<td>Missed dead balls are not a threshold problem but a <i>structural</i> one. This led to the
+two rules described in section 4.</td></tr>
+<tr><td><b>Match scope</b><br><code>DATA.md</code> vs Smart Tagging</td>
+<td>Kick-off and last-tag times put the 2nd-half start <b>2,852 frames (114 s) late</b>, and
+the 1st half 19,213 frames past its real end (into half-time).</td>
+<td>Use the half boundaries the organisers publish in DATA.md (section 3, step 0).</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>3. Methodology</h2>
+
+<h3>Why rules and not a learned model</h3>
+<ul>
+<li><b>No labels on this game may be used</b>, and we had no labelled possession data from other
+games that follows this tracking provider's conventions. A supervised model would have had nothing
+to learn from. A transparent rule-based model can be built from football logic and checked
+without labels.</li>
+<li><b>The ground truth is derived mechanically from corrected tracking</b> (CHALLENGE.md). Dead
+means the tracking says the ball is dead; otherwise the label is the team the tracking says owns
+it. The ATD we are given is the uncorrected version of the same data, so reasoning directly about
+ball position, ball speed and player proximity targets the right quantity. Re-detecting players
+from video would have spent the hackathon rebuilding what the ATD already gives.</li>
+<li><b>The ranking metric (spellF1) punishes flicker, not per-frame error.</b> A one-second blip
+<code>H H A H H</code> turns one correct possession into three wrong ones. The public baselines
+show this: the raw nearest-player rule produces 131 possessions where the truth has 17. So the
+whole design is about <i>not switching</i> unless the evidence is sustained.</li>
+</ul>
+
+<div class="pipe">
+  <div class="box"><b>Inputs</b>Tactical ATD<br>(players + ball)<br>+ half boundaries</div>
+  <div class="arrow">→</div>
+  <div class="box"><b>Stage 1</b>Dead-ball spans<br>velocity drops, ball out,<br>long stops, edge snapping</div>
+  <div class="arrow">→</div>
+  <div class="box"><b>Stage 2</b>Control evidence e(t)<br>nearest-player distance<br>× ball-speed weight</div>
+  <div class="arrow">→</div>
+  <div class="box"><b>Decoder</b>Viterbi per alive segment<br>switch cost 15<br>+ min spell 2 s</div>
+  <div class="arrow">→</div>
+  <div class="box end"><b>NOV4.csv</b>frame, label<br>H / A / D / X</div>
+</div>
+<p class="cap">Figure 1. The pipeline. All of it lives in <code>Scripts/05_PossessionAssignment.py</code>,
+which reuses the drop detector of script 04.</p>
+
+<h3>Step 0: match scope</h3>
+<p>The match scope is the two graded halves published by the organisers in DATA.md:
+video frames 11,185–90,651 and 110,808–190,197 (<code>GRADED_HALVES</code>). Frames outside them
+are written as <code>X</code>; they are never scored. <i>Why:</i> the organisers publish these as
+boundaries that carry no label information. The obvious alternative, Smart Tagging's kick-off
+and last tag, starts the 2nd half 114 s late, which would leave 2,521 graded frames labelled
+<code>D</code>. Each half now starts a fresh decoding segment at its first graded frame.</p>
+
+<h3>Stage 1: dead-ball spans</h3>
+<p><b>1a. Velocity drops</b> (script 04). Mean player speed, smoothed over 3 s, is divided by the
+local tempo (a 120 s rolling median). A drop starts when this ratio falls below 0.6 and lasts while
+it stays below 0.8 (hysteresis). Gaps under 2 s are merged and drops under 4 s discarded.
+<i>Why a ratio:</i> it stays fair across frantic spells and tired legs late in the match, where a
+fixed m/s cut would not. A slow build-up is also a drop, so a drop counts as <b>dead</b> only if
+one of these holds inside it:</p>
+<ul>
+<li><b>ball lost</b>: the ball is untracked for more than 50% of the drop (out of play, or in someone's hands);</li>
+<li><b>break</b>: longer than 90 s, or fewer than 10 players tracked (half-time, long injuries);</li>
+<li><b>ball out</b>: the ball is outside the pitch for at least 0.4 s;</li>
+<li><b>ball parked</b>: tracked and slower than 0.5 m/s for at least 3 s (placed for a restart);</li>
+<li><b>long stop</b>: the drop lasts at least 12 s <i>and</i> the
+speed ratio reaches 0.5 or below. <i>Why:</i> both teams at half their local tempo or less for
+12 s or more is a stoppage, not a lull in play. This holds even when the ball stays tracked
+because it is walked back or rolled to the taker, which the four tests above cannot see. 4 drops
+in the match meet this test.</li>
+</ul>
+<p>Drops that pass none of the tests (17 in the match) stay alive as open-play lulls.</p>
+<p><b>1b. Fast out-of-play spans.</b> These are stoppages too short for a 3 s smoother to see,
+such as a throw-in taken in 5 s. The ball tracked more than 1 m beyond a line for at least 0.4 s
+is dead until the first kick after it is back inside.</p>
+<p><b>1c. Boundary snapping.</b> A smoothed drop's edges are seconds out, which loses the
+possession at IoU 0.7. So each start is snapped to the moment the ball leaves the pitch or
+disappears after its last fast movement. Each end is snapped to the <i>kick onset</i> that follows
+the longest pause: ball faster than 4 m/s, sustained on 3 of 5 frames, after at least 1 s of
+quiet. <i>Why the longest pause:</i> the restart ends the stoppage, while a pass straight after it
+follows only a short pause. Two exceptions, identified in testing (section 4), because there the
+snapping does harm:</p>
+<ul>
+<li>An <b>out-of-play span keeps its start</b>. It already begins on the frame the ball crosses
+the line, which is the exact event. Snapping could only move it later. In the public window, one
+span was moved 125 frames (5 s) late.</li>
+<li>A <b>long stop keeps both edges</b> of its drop. The ball is carried, rolled and knocked
+about during the stoppage, and snapping reads those touches as play. In the one public-window
+example, it shrank a 20 s stoppage to 5 s.</li>
+</ul>
+<p><b>1d. Clean-up.</b> An alive gap under 3 s between two dead spans becomes dead: a restart that
+stops again immediately is far more likely a detection gap than a possession. Dead spans under 1 s
+are dropped.</p>
+
+<h3>Stage 2: per-frame control evidence</h3>
+<p>Computed only on frames where the ball is tracked. With d<sub>H</sub> and d<sub>A</sub> the
+distances from the ball to the nearest home and away player (a minimum over each team's slots, so
+duplicated or fragmented tracklets do not matter):</p>
+<pre><code>who(t)     = tanh((d_A − d_H) / 1.5 m)          +1 home clearly nearer, −1 away, ~0 contested
+w_dist(t)  = 1 if nearest player ≤ 1.5 m, else exp(−(d − 1.5) / 2 m)
+w_speed(t) = 1 up to 7 m/s, falling linearly to 0 at 15 m/s   (ball in flight)
+e(t)       = w_dist · w_speed · who                in [−1, +1]</code></pre>
+<p><i>Why:</i> 1.5 m is a playing distance (a player can touch the ball). A ball 8 m from everyone
+belongs to nobody. 7 m/s is dribbling pace. A ball travelling at 15 m/s is a pass or a shot, and
+the players it flies past have not won it. <code>tanh</code> makes a 50-50 contest score near zero,
+so a duel does not flip possession on its own. Untracked frames carry no evidence, so the decoder
+keeps the current team. Smart Tagging phase codes that name the team in possession (BUILD UP,
+PROGRESSION, CREATING CHANCES, LONG BALL, ATTACKING TRANSITION) add ±0.02 per frame, and only on
+frames with no ball.</p>
+
+<h3>Decoder</h3>
+<p>Each alive segment is decoded separately, so a dead span always separates possessions. A
+two-state Viterbi finds the H/A path that maximises Σ ±e(t) − 15 × (number of switches). A
+permanent change of team therefore needs about 7.5 units of opposing evidence (≈ 0.3–0.4 s of
+clear control), and a brief visit H→A→H needs twice that. Ties switch as <i>late</i> as possible,
+so the frames of a pass in flight stay with the passing team and the boundary lands on the
+receiver's first touch. Finally, any spell shorter than 2 s is absorbed into its neighbours,
+shortest first. <i>Why:</i> spellF1 matches whole possessions by temporal IoU. A false short spell
+costs a false positive <i>and</i> breaks the IoU of the possession around it, while a true
+possession under 2 s is almost impossible to match at IoU ≥ 0.5 anyway.</p>
+
+<!-- ============================================================ -->
+<h2>4. How the dead-ball rules were identified in testing</h2>
+<p>When we first tested the pipeline (stages 1a, 1b and the full boundary snapping, with Smart
+Tagging as the match scope), the public-window check showed a dead-ball precision of 0.97 but a
+recall of only 0.48. When we called a frame dead we were right, but we missed half of the dead
+time. The threshold sweep in script 07 (section 2) showed that no setting of the detector's
+thresholds fixed this. We then examined <i>what kind</i> of stoppage was being missed and found two
+general mechanisms, not specific frames:</p>
+<ul>
+<li>Edge snapping moved the exact line-crossing start of out-of-play spans later. This led to the
+first exception in 1c.</li>
+<li>Long stoppages in which the ball stays tracked (walked back, rolled to the taker) failed all
+four dead tests and were classed as lulls. This led to the long-stop test, and to the second
+exception in 1c: snapping had shrunk such a span from 20 s to 5 s.</li>
+</ul>
+<p>Checking the match scope against DATA.md separately showed the tag-based 2nd-half start was
+114 s late, which led to step 0. The constants of these rules come from reasoning, not a search:
+12 s is far longer than a lull in play, and 0.5 sits below the detector's 0.6 entry threshold. No
+constant was swept against the public window. The ablation below shows what each component
+contributes.</p>
+
+<table>
+<thead><tr><th>Components (cumulative)</th><th class="num">spellF1</th><th class="num">macroF1</th>
+<th class="num">D recall</th><th class="num">D precision</th><th class="num">possessions (truth 17)</th></tr></thead>
+<tbody>
+<tr><td>Stages 1a–1d without the two exceptions or the long-stop test; Smart Tagging scope</td><td class="num">0.577</td><td class="num">0.780</td><td class="num">0.48</td><td class="num">0.97</td><td class="num">17</td></tr>
+<tr><td>+ graded halves from DATA.md (step 0)</td><td class="num">0.577</td><td class="num">0.780</td><td class="num">0.48</td><td class="num">0.97</td><td class="num">17</td></tr>
+<tr><td>+ out-of-play spans keep their start</td><td class="num">0.594</td><td class="num">0.814</td><td class="num">0.57</td><td class="num">0.98</td><td class="num">16</td></tr>
+<tr><td><b>+ long-stop test and its kept edges (submitted, NOV4.csv)</b></td><td class="num"><b>0.625</b></td><td class="num"><b>0.904</b></td><td class="num"><b>0.89</b></td><td class="num">0.96</td><td class="num">15</td></tr>
+</tbody>
+</table>
+<p class="cap">Public 5-minute window. Step 0 only affects the start of the 2nd half (2,521 graded
+frames), which this window does not cover, so it scores the same here.</p>
+
+<div class="note"><b>Caveat, stated plainly.</b> The public window was used to <i>find</i> which
+kinds of stoppage were missed and to confirm that the fixes helped. The rules are general and no
+constant was tuned on the window. But because the window guided where we looked, the submitted
+pipeline's score on it is optimistically biased. Treat the full-match, label-free diagnostics in section 8
+as the fairer evidence. One missed case we deliberately did <i>not</i> fix: the ground truth marks
+a shot that goes out as dead from the strike, while we mark it dead from the line crossing.
+Separating a shot from a long pass in flight would need a rule we could not justify without
+labels.</div>
+
+<!-- ============================================================ -->
+<h2>5. Assets used, and assets dropped</h2>
+<table>
+<thead><tr><th style="width:24%">Asset</th><th style="width:13%">Used?</th><th>How / why</th></tr></thead>
+<tbody>
+<tr><td>Tactical ATD (<code>_atd.xml</code> + <code>_atd.txt</code>)</td><td><b>Yes — core</b></td>
+<td>Player and ball positions (converted to metres using the metadata's pitch size) and the
+per-player speed channel. Loaded with kloppy, after an alignment check confirms one record per
+video frame.</td></tr>
+<tr><td>Half boundaries (DATA.md)</td><td><b>Yes</b></td>
+<td>Match scope (step 0). Published by the organisers; they carry no labels.</td></tr>
+<tr><td>Tactical Smart Tagging</td><td><b>Yes — limited</b></td>
+<td>(1) A ±0.02 per-frame prior from the phase codes, only on frames with no ball. (2) Label-free
+validation of the dead-ball detector. Smart Tagging is algorithmic, not human-produced.</td></tr>
+<tr><td>Smart Tagging as match scope</td><td>Tested, dropped</td>
+<td>Kick-off to last tag starts the 2nd half 114 s late; the DATA.md half boundaries are used instead.</td></tr>
+<tr><td>Smart Tagging as boundaries</td><td>Dropped</td>
+<td>Tag intervals are templated windows, so they must never set a possession boundary.
+<code>DEFENDING …</code> codes mirror the attacking ones and are skipped, not inverted.</td></tr>
+<tr><td>Tactical homography</td><td>Dropped</td>
+<td>The ATD is already in pitch coordinates, so we never needed to map video pixels to the
+pitch.</td></tr>
+<tr><td>Tactical video</td><td>Inspection only</td>
+<td>Watched to understand the data and to debug. No frames were labelled or used in the
+pipeline.</td></tr>
+<tr><td>Broadcast video, ATD, homography</td><td>Dropped</td>
+<td>A different frame count (164,488 vs 199,319 submission rows), replays and zooms, and only
+65.8% usable homography. Everything is indexed on the tactical feed.</td></tr>
+<tr><td>Raw ball-speed channel</td><td>Dropped</td>
+<td>Present on ~10% of frames; ball speed is computed from position instead.</td></tr>
+<tr><td>“Other team restarts” prior</td><td>Tried, dropped</td>
+<td>A head start for the non-possessing team after the ball went out. The law follows the last
+<i>touch</i>, and a clearance that goes out is one touch inside the other team's possession. A
+label-free check found the decoded team before the stoppage agreed with “other team restarts”
+only ~40–44% of the time.</td></tr>
+<tr><td>Organisers' validator and scorer</td><td>Yes — tooling</td>
+<td><code>validate_submission.py</code> and <code>run_evaluation.py</code> are run unchanged
+(git submodule <code>archive/REPO</code>).</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>6. Training data</h2>
+<div class="panel"><p><b>None.</b> No labelled dataset of any kind was used, from the provided game or
+from any other game. Nothing in the pipeline is trained or fitted to labels.</p></div>
+<p>Every constant (thresholds in metres, m/s and seconds; the switch cost; the minimum spell) was
+set from football and physical reasoning and checked with label-free diagnostics: possession
+counts and durations, label shares, and how well the dead-ball detector agrees with the automatic
+Smart Tagging set pieces, including a permutation test against chance. Section 4 describes how
+the public 5-minute window was used. No frame-specific rule or constant appears in the code, and
+no human-produced data about the game (event data, corrected tracking) was used.</p>
+
+<!-- ============================================================ -->
+<h2>7. The possession rules we implemented</h2>
+<table>
+<thead><tr><th style="width:21%">Situation</th><th>Where we drew the line</th></tr></thead>
+<tbody>
+<tr><td>Ball in / out of play</td><td>Dead (D) when any of these holds:
+<ul style="margin:2pt 0 0">
+<li>the ball is more than 1 m beyond a line for at least 0.4 s (until the first kick after it comes back in);</li>
+<li>players slow below 60% of the local tempo for at least 4 s <i>and</i> the ball is lost, out or parked;</li>
+<li>players stay at or below 50% of the local tempo within a drop of at least 12 s (long stop).</li>
+</ul>
+Edges are snapped to ball events, except an out-of-play start and both edges of a long stop.
+Dead spans under 1 s are ignored; alive gaps under 3 s between two dead spans count as dead.</td></tr>
+<tr><td>Controlled possession</td><td>A team gains possession when the ball is close to one of its
+players (within 1.5 m at full weight, decaying beyond), clearly closer than any opponent, and at a
+controllable speed (up to 7 m/s at full weight). That control must last long enough to pay the
+switch cost (~0.3–0.4 s of clear control), and the resulting spell must last at least 2 s.</td></tr>
+<tr><td>Loose ball</td><td>A ball far from everyone, or untracked, gives zero evidence, so
+possession stays with the last team, as the challenge definition asks.</td></tr>
+<tr><td>Challenges / 50-50s</td><td>When both teams are at a similar distance, the evidence is near
+0, so a duel does not flip possession. Only the winner's subsequent control does.</td></tr>
+<tr><td>Touches, deflections, aerial duels</td><td>A single touch gives a few frames of evidence,
+not enough to pay the switch cost. A brief visit to the other team must pay it twice, and any
+surviving spell under 2 s is absorbed.</td></tr>
+<tr><td>Passes and shots in flight</td><td>A ball faster than 15 m/s carries zero weight. Ties
+switch late, so the change lands on the receiver's control, not mid-flight.</td></tr>
+<tr><td>Restarts</td><td>Every restart starts a new alive segment, so a possession never spans a
+stoppage. Who restarts is decided by the evidence after the restart kick, with no law-based prior.
+A tiny keep-previous-team bias (0.5) only breaks ties in segments with no evidence at all.</td></tr>
+<tr><td>Abstention (X)</td><td>Only outside the two graded halves, which are never scored. Inside
+them the decoder always commits to H, A or D.</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>8. Results and the tests we ran</h2>
+<figure><img src="figures/scores.png" alt="Public-window spellF1 of NOV4 and the four host baselines with bootstrap intervals"></figure>
+<p class="cap">Figure 2. Public-window spellF1. With 17 possessions the intervals are wide, and the
+scorer itself reports gaps under ~0.34 as within noise here. The window confirms the pipeline is
+correct; it cannot rank close systems.</p>
+
+<table>
+<thead><tr><th>Metric (public window, 7,500 graded frames)</th><th class="num">NOV4</th>
+<th class="num">smooth125</th><th class="num">smooth50</th></tr></thead>
+<tbody>
+<tr><td>spellF1 (ranking metric)</td><td class="num"><b>0.625</b></td><td class="num">0.424</td><td class="num">0.326</td></tr>
+<tr><td>macroF1</td><td class="num"><b>0.904</b></td><td class="num">0.581</td><td class="num">0.621</td></tr>
+<tr><td>Predicted / true possessions</td><td class="num">15 / 17</td><td class="num">16 / 17</td><td class="num">26 / 17</td></tr>
+<tr><td>Mean possession length (truth 14.2 s)</td><td class="num">16.4 s</td><td class="num">18.5 s</td><td class="num">10.8 s</td></tr>
+<tr><td>F1 H / A / D</td><td class="num">0.908 / 0.882 / 0.921</td><td class="num">0.786 / 0.811 / 0.146</td><td class="num">0.778 / 0.762 / 0.323</td></tr>
+<tr><td>Alive-vs-dead F1 · team accuracy when both alive</td><td class="num">0.982 · 0.914</td><td class="num">0.899 · 0.885</td><td class="num">0.899 · 0.858</td></tr>
+<tr><td>Transition F1 at ±25 frames</td><td class="num">0.368</td><td class="num">0.167</td><td class="num">0.082</td></tr>
+</tbody>
+</table>
+
+<h3>Tests</h3>
+<ul>
+<li><b>Reproducibility.</b> We deleted the tracking cache and rebuilt from the raw data
+(<code>--refresh</code>, 50 s), then re-ran from the cache. Both runs produced byte-identical
+output, SHA-256 <code>6bbbefa3813265e853adc5a77411886a4eae140289bf872113d8c954ee7f1930</code>.</li>
+<li><b>Format.</b> The official <code>validate_submission.py</code> passes: 199,319 rows, frames
+0…199,318. Labels: H 33.3%, A 25.6%, D 20.7%, X 20.3% (X only outside the graded halves). The
+pipeline refuses to finish if validation fails.</li>
+<li><b>Frame alignment.</b> 199,319 ATD records for 199,319 video frames: contiguous, no duplicates.</li>
+<li><b>Dead-ball detector vs Smart Tagging (label-free).</b> After all rules and snapping, 79% of
+the 57 tagged set pieces in scope start inside a final dead span (77% without the long-stop test and the out-of-play start rule). 50% of dead spans
+contain a set-piece tag, a lower bound because fouls are rarely tagged.</li>
+<li><b>Full-match sanity (no labels).</b> 269 possessions (139 H / 130 A), median 11.7 s, 10–90%
+range 3.2–38.4 s, 3.4 label changes per minute. The ball is dead for 26% of graded time, in 88
+spans with a median of 15.8 s.</li>
+<li><b>Ablation: Smart Tagging prior off.</b> 5,733 graded frames (3.6%) change and the
+possession count stays at 269, while the public-window score is identical. Its true effect is
+therefore unmeasured. We kept the prior because it only acts where there is no ball evidence at
+all.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>9. Limitations, and what we would fix with more time</h2>
+<ul>
+<li><b>Dead-ball rules rest on few checked examples.</b> The long-stop rule and the out-of-play
+start rule each fixed one public-window case. The other three full-match long stops have not been
+checked against the video, and an unusually slow build-up of 12 s or more would be marked dead.</li>
+<li><b>Shots that go out are marked dead late:</b> from the line crossing, not the strike (see section 4).</li>
+<li><b>Transition timing.</b> Only 35% of possession changes are matched within ±1 s, and the
+decoder tends to switch about 7 frames early. Snapping H↔A boundaries to the receiver's first
+touch, as we already do for dead-span edges, is the obvious next step.</li>
+<li><b>The ball is missing on 28% of alive frames.</b> Through those gaps we only carry the last
+team, so a turnover inside a gap is found late or not at all. A ball detector on the tactical
+video could fill them.</li>
+<li><b>2-D only.</b> We ignore ball height, so a lofted ball passing over a player looks like
+control if its ground speed is low. The 15 m/s cut-off only catches fast flights.</li>
+<li><b>Short possessions are sacrificed.</b> The 2 s minimum spell removes real but brief
+possessions (for example, a one-touch interception that is lost again). This is a deliberate
+trade for spellF1.</li>
+<li><b>Hand-set constants, one match.</b> The parameters come from reasoning, not from data, and
+have only been checked on this game. With labelled possession data from other games, we would fit
+the emission model (control radius, speed weights) and the switch cost of an HMM, and test whether
+the rules transfer.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>10. Repository map</h2>
+<table>
+<thead><tr><th style="width:38%">Path</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><code>Scripts/05_PossessionAssignment.py</code></td><td><b>The model</b>: scope, stages 1–2, decoder, writes and validates <code>NOV4.csv</code></td></tr>
+<tr><td><code>Scripts/04_VelocityDropDetection.py</code></td><td>Velocity-drop detector (reused by 05) and its Smart Tagging validation</td></tr>
+<tr><td><code>Scripts/03_SetPieceIntensity.py</code></td><td>Set pieces vs player intensity (exploration, section 2)</td></tr>
+<tr><td><code>Scripts/06_ScoreSubmission.py</code></td><td>Runs the official validator and scorer unchanged</td></tr>
+<tr><td><code>Scripts/07_DeadBallExperiments.py</code></td><td>Dead-ball threshold sweep (section 2)</td></tr>
+<tr><td><code>Scripts/01</code>, <code>02</code></td><td>Data exploration (ball visibility, squads) and the Smart Tagging timeline</td></tr>
+<tr><td><code>src/morethanahack/helpers/</code></td><td>config (paths), loader (ATD, Smart Tagging, alignment checks), explorer (pitch, frame viewer)</td></tr>
+<tr><td><code>docs/NOV4.pdf</code>, <code>docs/source/</code></td><td>This document and its source (<code>uv run python docs/source/build_document.py</code>)</td></tr>
+<tr><td><code>archive/REPO</code> (submodule)</td><td>Organisers' challenge repository: rules, validator, scorer, baselines</td></tr>
+</tbody>
+</table>
+<p><b>Data.</b> <code>data/</code> and every match-derived export (videos, ATD, homography, Smart
+Tagging, frame-level CSVs, the tracking cache, the submission) are in <code>.gitignore</code>; no
+match data is in the repository.</p>
+
+</body>
+</html>

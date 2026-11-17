@@ -2,13 +2,14 @@
 refuses to flicker.
 
 Run with:
-    uv run python Scripts/05_PossessionAssignment.py            # labels + diagnostics + figure
-    uv run python Scripts/05_PossessionAssignment.py --no-show  # save the figure, don't open it
+    uv run python Scripts/05_PossessionAssignment.py            # labels + diagnostics; figure saved
+    uv run python Scripts/05_PossessionAssignment.py --show     # ... and also open the figure
     uv run python Scripts/05_PossessionAssignment.py --refresh  # rebuild the tracking cache
     uv run python Scripts/05_PossessionAssignment.py --no-tags  # no Smart Tagging prior at all
 
 Outputs go to data/derived/possession/ (inside data/, so git ignores them):
-    submission/possession.csv   frame,label for all 199 319 video frames (the submission format)
+    submission/NOV4.csv         THE SUBMISSION: frame,label for all 199 319 video frames, named
+                                after the team as SUBMISSION.md asks (<team_name>.csv)
     dead_spans.csv              one row per dead-ball span: why it is dead, raw vs refined bounds
     possessions.csv             one row per decoded H/A spell
     timeline.png                control evidence and decoded labels over each half
@@ -38,11 +39,14 @@ STAGE 1  Dead-ball spans
       * 04's break flag: > 90 s or < 10 players tracked (half-time, long injuries)
       * the ball is outside the pitch for >= 0.4 s
       * the ball is "parked": tracked and slower than 0.5 m/s for >= 3 s (placed for a restart)
-    Drops failing all four are open-play lulls and stay ALIVE.
+      * "long stop": the drop lasts >= 12 s and the speed ratio reaches <= 0.5 (both teams at half
+        their tempo that long is a stoppage, even with the ball tracked and being carried back)
+    Drops failing all five are open-play lulls and stay ALIVE.
 1b. Out-of-play spans (fast stoppages 04 cannot see, e.g. a throw-in taken in 5 s): the ball is
     tracked > 1 m outside the lines for >= 0.4 s. Dead from the first outside frame until the first
     kick of the ball after it is back inside.
-1c. Everything outside the match (before each half's kick-off tag, after its last tag) is dead.
+1c. The match scope is the two graded halves published in DATA.md (GRADED_HALVES), not the
+    Smart Tagging kick-off/last-tag frames. Outside them nothing is decoded and the label is X.
 1d. Boundary refinement. A velocity drop is smoothed over 3 s, so its edges are late/early by
     seconds -- at IoU 0.7 that loses the possession. Each span's edges are snapped to ball events:
       * START: in [start - 5 s, start + 10 s], find the ball's last fast movement inside the pitch;
@@ -53,6 +57,8 @@ STAGE 1  Dead-ball spans
         speed > 4 m/s, sustained (3 of the next 5 frames), after >= 1 s without fast movement.
         Pick the onset that follows the LONGEST pause -- the restart ends the stoppage, while a pass
         straight after it follows only a short pause. No onset -> the ball's reappearance -> keep.
+      * Not applied where it misfires: an out-of-play span keeps its start (the line crossing is
+        already exact), and a long stop keeps both bounds (touches during the stop look like play).
 1e. Clean-up: overlapping spans are merged; an alive gap < 3 s between two dead spans becomes dead
     (a restart that immediately stops again is far likelier a detection gap than a possession);
     dead spans < 1 s are dropped.
@@ -132,6 +138,9 @@ OUT_MARGIN_M = 1.0          # ball this far beyond a line counts as out (trackin
 OUT_MIN_S = 0.4             # ... for at least this long
 PARKED_SPEED = 0.5          # m/s: a ball slower than this ...
 PARKED_S = 3.0              # ... for this long, inside a drop, has been placed for a restart
+LONG_STOP_S = 12.0          # a drop this long ...
+LONG_STOP_RATIO = 0.5       # ... reaching this speed ratio (half the local tempo) is a stoppage:
+                            # open play rarely keeps both teams that slow for that long
 START_LOOKBACK_S = 5        # span start refinement window: [start - 5 s, start + 10 s]
 START_LOOKAHEAD_S = 10
 END_LOOKBACK_S = 8          # restart search window: [end - 8 s, end + 2 s]
@@ -166,9 +175,16 @@ MIN_SPELL_S = 2.0           # H/A spells shorter than this are absorbed by their
 
 HOME, AWAY = 0, 1
 SUBMISSION_ROWS = 199_319   # tactical video frames; the validator checks this too
+# The graded halves, inclusive video frames (archive/REPO/DATA.md "Which frames are graded", also
+# games.half_video_blocks("BAR-ATH")). Published by the hosts as boundaries, not labels. They define
+# the match scope: each half's first frame starts a fresh possession segment, and everything outside
+# is ungraded, so it is written as X.
+GRADED_HALVES = ((11_185, 90_651), (110_808, 190_197))
 VALIDATOR = PROJECT_ROOT / "archive" / "REPO" / "evaluation" / "validate_submission.py"
 OUT_DIR = DATA_ROOT / "derived" / "possession"
 CACHE = OUT_DIR / "tracking_cache.npz"
+TEAM_NAME = "NOV4"          # the submission is named after the team: <team_name>.csv
+SUBMISSION_FILE = OUT_DIR / "submission" / f"{TEAM_NAME}.csv"
 
 INK, MUTED, GRID, DEAD_COLOUR = "#333333", "#888888", "#E5E5E5", "#B7BDC6"
 
@@ -249,12 +265,13 @@ def ball_events(signals, pitch):
             "parked": parked, "onset": onset, "quiet_len": quiet_len}
 
 
-def classify_drops(drops, ev):
+def classify_drops(drops, ev, ratio):
     """Which velocity drops are dead balls, and why (first reason that holds)."""
     reasons = []
     for _, d in drops.iterrows():
         a, b = int(d["start_frame"]), int(d["end_frame"])
         parked_run = max((e - s for s, e in zip(*runs(ev["parked"][a:b]))), default=0)
+        deep = bool(np.any(ratio[a:b] <= LONG_STOP_RATIO))   # NaN compares False
         if d["is_break"]:
             reasons.append("break")
         elif d["dead_ball"]:
@@ -263,6 +280,8 @@ def classify_drops(drops, ev):
             reasons.append("ball out")
         elif parked_run >= sec(PARKED_S):
             reasons.append("ball parked")
+        elif b - a >= sec(LONG_STOP_S) and deep:
+            reasons.append("long stop")
         else:
             reasons.append(None)      # open-play lull -> alive
     return reasons
@@ -315,8 +334,8 @@ def dead_spans(signals, pitch, scope):
     ev = ball_events(signals, pitch)
 
     smooth, _, ratio = v04.speed_ratio(signals)
-    drops = v04.describe_drops(v04.detect_drops(ratio), signals, smooth, ratio, pitch)
-    reasons = classify_drops(drops, ev)
+    drops = v04.describe_drops(v04.detect_drops(ratio, v04.ENTER, v04.EXIT), signals, smooth, ratio, pitch)
+    reasons = classify_drops(drops, ev, ratio)
     raw = [(int(a), int(b), r) for a, b, r in zip(drops["start_frame"], drops["end_frame"], reasons)
            if r is not None]
     n_lulls = sum(r is None for r in reasons)
@@ -324,7 +343,11 @@ def dead_spans(signals, pitch, scope):
 
     rows = []
     for a, b, why in sorted(raw):
-        a2, b2 = refine_start(a, b, ev), refine_end(a, b, ev, n)
+        # an out-of-play span already starts on the line crossing -- the exact event. A long stop
+        # keeps the drop's own bounds: the ball is carried / knocked about during it, and the
+        # ball-event refinement reads those touches as play and shrinks the span.
+        a2 = a if why in ("out of play", "long stop") else refine_start(a, b, ev)
+        b2 = b if why == "long stop" else refine_end(a, b, ev, n)
         if b2 > a2:
             rows.append({"raw_start": a, "raw_end": b, "start_frame": a2, "end_frame": b2,
                          "reason": why, "ball_out": bool(ev["outside"][a:b2].any())})
@@ -531,11 +554,23 @@ def official_validation(path):
     return result.returncode == 0
 
 
-def main(show=True, refresh=False, use_tags=True):
+def graded_mask(n):
+    """True on the graded frames: the two halves published in DATA.md."""
+    mask = np.zeros(n, dtype=bool)
+    for first, last in GRADED_HALVES:
+        mask[first:last + 1] = True
+    return mask
+
+
+def main(show=False, refresh=False, use_tags=True):
     signals, pos, team, pitch, names = load_tracking(refresh)
     n = len(signals)
     tags = load_smart_tagging(DEFAULT_SOURCE)
-    scope = v03.in_play_mask(tags, n)
+    scope = graded_mask(n)
+    tag_scope = v03.in_play_mask(tags, n)
+    for (first, last), (a, b) in zip(GRADED_HALVES, zip(*runs(tag_scope))):
+        print(f"  half {first}..{last}: Smart Tagging scope was {a}..{b - 1} "
+              f"(start {a - first:+d}, end {b - 1 - last:+d} frames)")
     print(f"{n} frames, {pos.shape[1]} slots ({(team == HOME).sum()} home / {(team == AWAY).sum()} away), "
           f"match scope {scope.sum() / VIDEO_FPS / 60:.1f} min")
 
@@ -577,7 +612,8 @@ def main(show=True, refresh=False, use_tags=True):
 
     # ---------- DECODER
     labels, stats = decode(e, dead, restart_flags(dead, spans, n))
-    poss = possession_table(labels, scope)
+    labels[~scope] = "X"          # ungraded frames: ignored by the scorer
+    poss =possession_table(labels, scope)
     print(f"\n== Decoded possession (scope only) ==")
     counts = pd.Series(labels[scope]).value_counts(normalize=True)
     print("  label share:", {k: f"{v:.0%}" for k, v in counts.items()})
@@ -596,7 +632,7 @@ def main(show=True, refresh=False, use_tags=True):
               f" (restart prior {'off' if RESTART_PRIOR == 0 else RESTART_PRIOR})")
 
     # ---------- outputs
-    sub = write_submission(OUT_DIR / "submission" / "possession.csv", labels)
+    sub = write_submission(SUBMISSION_FILE, labels)
     if not official_validation(sub):
         raise SystemExit(f"{sub} FAILED the official validation -- do not submit it")
     spans.to_csv(OUT_DIR / "dead_spans.csv", index=False)
@@ -611,8 +647,9 @@ def main(show=True, refresh=False, use_tags=True):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--no-show", action="store_true", help="save the figure without opening it")
+    parser.add_argument("--show", action="store_true", help="open the figure (it is always saved)")
+    parser.add_argument("--no-show", action="store_true", help=argparse.SUPPRESS)  # old flag, now the default
     parser.add_argument("--refresh", action="store_true", help="rebuild the tracking cache")
     parser.add_argument("--no-tags", action="store_true", help="no Smart Tagging prior")
     a = parser.parse_args()
-    main(show=not a.no_show, refresh=a.refresh, use_tags=not a.no_tags)
+    main(show=a.show and not a.no_show, refresh=a.refresh, use_tags=not a.no_tags)
