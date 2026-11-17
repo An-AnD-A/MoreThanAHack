@@ -693,8 +693,8 @@ if __name__ == "__main__":
     # plot_frame(dataset, 12001)
     # anim = animate_frames(dataset, 11185, 11435)  # 10 s of play at 25 fps
     # Tactical frames
-    viewer = FrameViewer(dataset, 11185, 90651)  # arrows = 1 frame, up/down = 1 s
+    viewer = FrameViewer(dataset, 11092, 90651)  # arrows = 1 frame, up/down = 1 s
     plt.show()
 
     # Broadcast Frames
-    viewer = FrameViewer(dataset, 11185, 90651)  # arrows = 1 frame, up/down = 1 s
+    viewer = FrameViewer(dataset, 11092, 90651)  # arrows = 1 frame, up/down = 1 s

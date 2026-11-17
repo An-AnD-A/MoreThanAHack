@@ -17,4 +17,4 @@ print('ball present on %d of %d loaded frames (%.1f%%)' % (seen.sum(),
                                                            len(seen),
                                                            100 * seen.mean()))
 
-frame_df[(frame_df['frame_id'] > 11185) & (frame_df['frame_id'] < 90651)].to_csv('filtered_frames.csv', index=False)
+frame_df[(frame_df['frame_id'] > 11092) & (frame_df['frame_id'] < 90651)].to_csv('filtered_frames.csv', index=False)
